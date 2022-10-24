@@ -6,6 +6,11 @@ editor_options:
     wrap: 72
 ---
 
+Physical Activity workshop for ISUH 2022 Conference in Valencia, 24
+October 2022
+
+Jardín Botánico (Aula Cavanilles), 16:30-18:00
+
 # Setup: load packages
 
 We first load all the required packages
