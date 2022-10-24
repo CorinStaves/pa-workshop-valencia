@@ -6,7 +6,7 @@ editor_options:
     wrap: 72
 ---
 
-# call packages
+# Setup: load packages
 
 We first load all the required packages
 
@@ -32,18 +32,13 @@ if (!require("drpa",character.only = TRUE)) {
 Marginal Metabolic Equivalent Task (mMET) values associated with walking
 and cycling can be obtained from the compendium of physical activities
 (<https://sites.google.com/site/compendiumofphysicalactivities/home>).
-The values defined below are from ?? and ?? respectively.
-
-Please replace the "PATH_TO..." strings with the full path to the
-mortality and travel survey data, downloadable from ??. Alternatively,
-leave these as defined and use setwd() to change your working directory
-to the folder containing the data.
+For this exercise we use 2.5 mMET for walking and 5.6 mMET for cycling.
 
 ```{r}
 WALK_MMET = 2.5
 CYCLE_MMET = 5.6
-PATH_TO_MORTALITY_DATA = "gbd_sao_paulo.csv"
-PATH_TO_TRAVEL_SURVEY = "travel_pa_data.csv"
+MORTALITY_DATA_FILE = "gbd_sao_paulo.csv"
+TRAVEL_SURVEY_DATA_FILE = "travel_pa_data.csv"
 ```
 
 # Import travel survey
@@ -88,7 +83,7 @@ activity. This information in contained in the variable "ltpa_marg_met".
 
 ```{r message=F}
 # Load travel survey data
-travel_survey <- read_csv(PATH_TO_TRAVEL_SURVEY) %>% arrange(participant_id,trip_id)
+travel_survey <- read_csv(TRAVEL_SURVEY_DATA_FILE) %>% arrange(participant_id,trip_id)
 
 # View first few rows
 head(travel_survey)
@@ -106,7 +101,7 @@ in the travel survey.
 
 ```{r}
 # Read mortality data
-mortality_data <- read_csv(PATH_TO_MORTALITY_DATA)
+mortality_data <- read_csv(MORTALITY_DATA_FILE)
 
 # View first few rows
 head(mortality_data)
@@ -122,7 +117,7 @@ mortality_data <- mortality_data %>%
   select(-cause_name,-measure_name.x,-sex_name,-age_name,-val)
 ```
 
-# Aggregate to the individual and calculate total marginal met hours per week
+# Aggregate trip physical activity to the individual
 
 In this step we use dplyr to aggregate trip and stage level data to
 determine total walking and cycling physical activity for each
@@ -131,7 +126,7 @@ age, sex, ltpa_marg_met), so we keep these variables in the aggregated
 dataset using the "first" function. We combine age into groups to allow
 linking with mortality data.
 
-Note that as the travel diary is only for a single day, so it must be
+Note that as the travel diary only covers a single day, so it must be
 multiplied by 7 to create an estimate of physical activity throughout
 the week. Leisure-time physical activity (represented using the variable
 "ltpa_marg_met") is already a weekly estimate so this does not need to
@@ -166,7 +161,7 @@ individual_data <- travel_survey %>%
 head(individual_data)
 ```
 
-# Calculate total marginal metabolic equivalent task hours and define scenarios
+# Calculate total mMET hours and define scenarios
 
 Here, we calculate the total weekly physical activity (in mMET-hrs per
 week) by summing physical activity from walking, cycling, and
@@ -230,7 +225,7 @@ of 12.84 mMET-hours per week or higher). Relative risks for the scenario
 are higher than those for the baseline due to the reduction in physical
 activity in the scenario.
 
-# Mortality
+# Estimate mortality using GBD data
 
 Use mortality rates from the GBD to investigate changes in total
 mortality in the survey population.
@@ -244,13 +239,13 @@ individual_data <- individual_data %>%
 
 
 SURVEY_POPULATION_MORTALITY_BASE = sum(individual_data$mortality_base)
-SURVEY_POPULATION_MORTALITY_BASE
-
 SURVEY_POPULATION_MORTALITY_SCEN = sum(individual_data$mortality_scen)
-SURVEY_POPULATION_MORTALITY_SCEN
-
 SURVEY_POPULATION_MORTALITY_DIFFERENCE = SURVEY_POPULATION_MORTALITY_SCEN - SURVEY_POPULATION_MORTALITY_BASE
-SURVEY_POPULATION_MORTALITY_DIFFERENCE
+
+print(paste("Baseline mortality in survey population =",SURVEY_POPULATION_MORTALITY_BASE))
+print(paste("Scenario mortality in survey population =",SURVEY_POPULATION_MORTALITY_SCEN))
+print(paste("Change in mortality for survey population =",SURVEY_POPULATION_MORTALITY_DIFFERENCE))
+
 ```
 
 These calculations show that in the survey population of 10.000, the
@@ -292,5 +287,6 @@ head(population_groups)
 
 # Calculate total change in mortality
 TOTAL_MORTALITY_CHANGE = sum(population_groups$change)
-TOTAL_MORTALITY_CHANGE
+print(paste("Change in mortality for total population =",TOTAL_MORTALITY_CHANGE))
+
 ```
