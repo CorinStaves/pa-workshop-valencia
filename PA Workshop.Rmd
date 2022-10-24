@@ -1,0 +1,296 @@
+---
+title: "ISUH 2022 Physical Activity Workshop"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# call packages
+
+We first load all the required packages
+
+```{r warning = F}
+# Load tidyverse (install if not loaded)
+if (!require("tidyverse")) {
+  install.packages("tidyverse")
+  library(tidyverse)
+}
+
+# Install DRPA package (for calculating relative risks)
+if (!require("drpa",character.only = TRUE)) {
+  print('Installing "drpa" package...')
+  remotes::install_github("meta-analyses/drpa")
+  library(drpa)
+  print("")
+}
+
+```
+
+# Constant values
+
+Marginal Metabolic Equivalent Task (mMET) values associated with walking
+and cycling can be obtained from the compendium of physical activities
+(<https://sites.google.com/site/compendiumofphysicalactivities/home>).
+The values defined below are from ?? and ?? respectively.
+
+Please replace the "PATH_TO..." strings with the full path to the
+mortality and travel survey data, downloadable from ??. Alternatively,
+leave these as defined and use setwd() to change your working directory
+to the folder containing the data.
+
+```{r}
+WALK_MMET = 2.5
+CYCLE_MMET = 5.6
+PATH_TO_MORTALITY_DATA = "gbd_sao_paulo.csv"
+PATH_TO_TRAVEL_SURVEY = "travel_pa_data.csv"
+```
+
+# Import travel survey
+
+The travel survey dataset for Sao Paulo is a single-day travel diary in
+which each row represents a trip, or trip stage, made by the respondent.
+Public transport trips are broken down into stages to identify each mode
+that is used (for example, walking to your home bus stop, taking one
+bus, and then walking from the destination stop to work is recorded as a
+3-stage trip). This stage data is useful for identifying walking and
+cycling physical activity that takes place as a part of public transport
+trips.
+
+The travel survey dataset has been linked with a physical activity
+dataset containing the individual's total non-transport physical
+activity. This information in contained in the variable "ltpa_marg_met".
+
+[Individual-level variables]{.underline}
+
+-   **participant_id:** Unique ID for each individual
+
+-   **age:** participant's age as an integer
+
+-   **sex:** male or female
+
+-   **ltpa_marg_met:** leisure-time (non-transport) physical activity in
+    marginal metabolic equivalent task hours (mMET-hrs) per week
+
+[Trip-level variables:]{.underline}
+
+-   **trip_id:** Unique ID for each trip made by each individual
+
+-   **trip_mode:** Main mode of the trip
+
+-   **trip_distance:** Total trip distance in kilometers
+
+[Stage-level variables:]{.underline}
+
+-   **stage_mode:** Mode of the trip stage
+
+-   **stage_duration:** Duration of each stage in minutes
+
+```{r message=F}
+# Load travel survey data
+travel_survey <- read_csv(PATH_TO_TRAVEL_SURVEY) %>% arrange(participant_id,trip_id)
+
+# View first few rows
+head(travel_survey)
+```
+
+# Import mortality data
+
+Mortality data for Sao Paulo has been obtained from the global burden of
+disease database (<https://ghdx.healthdata.org/gbd-2019>). For this
+exercise we will only consider mortality from all causes. Therefore, we
+filter the dataset to only deaths from all causes. Mortality can be
+calculated by dividing the number deaths by the total population in each
+group. Furthermore, we change sex to all lower case to match the values
+in the travel survey.
+
+```{r}
+# Read mortality data
+mortality_data <- read_csv(PATH_TO_MORTALITY_DATA)
+
+# View first few rows
+head(mortality_data)
+
+# Filter down to all-cause mortality and update/remove variable names
+mortality_data <- mortality_data %>%
+  filter(cause_name == "All causes", 
+         measure_name.x == "Deaths") %>%
+  mutate(sex = tolower(sex_name),
+         age_gr = age_name,
+         deaths = val,
+         mortality = deaths / population) %>% 
+  select(-cause_name,-measure_name.x,-sex_name,-age_name,-val)
+```
+
+# Aggregate to the individual and calculate total marginal met hours per week
+
+In this step we use dplyr to aggregate trip and stage level data to
+determine total walking and cycling physical activity for each
+individual. Some variables are already at the individual level (e.g.
+age, sex, ltpa_marg_met), so we keep these variables in the aggregated
+dataset using the "first" function. We combine age into groups to allow
+linking with mortality data.
+
+Note that as the travel diary is only for a single day, so it must be
+multiplied by 7 to create an estimate of physical activity throughout
+the week. Leisure-time physical activity (represented using the variable
+"ltpa_marg_met") is already a weekly estimate so this does not need to
+be multiplied by 7.
+
+```{r}
+individual_data <- travel_survey %>%
+  group_by(participant_id) %>%
+  summarise(age = first(age),
+            sex = first(sex),
+            leisure_mmet_hr = first(ltpa_marg_met),
+            walk_minutes = 7 * sum(stage_duration[stage_mode == "pedestrian" | stage_mode == "walk_to_pt"]),
+            bike_minutes = 7 * sum(stage_duration[stage_mode == "bike"])) %>%
+  mutate(age_gr = case_when(age < 5 ~ "0 to 4",
+                            age < 10 ~ "5 to 9",
+                            age < 15 ~ "10 to 14",
+                            age < 20 ~ "15 to 19",
+                            age < 25 ~ "20 to 24",
+                            age < 30 ~ "25 to 29",
+                            age < 35 ~ "30 to 34",
+                            age < 40 ~ "35 to 39",
+                            age < 45 ~ "40 to 44",
+                            age < 50 ~ "45 to 49",
+                            age < 55 ~ "50 to 54",
+                            age < 60 ~ "55 to 59",
+                            age < 65 ~ "60 to 64",
+                            age < 70 ~ "65 to 69"),
+         walk_mmet_hr = WALK_MMET * walk_minutes / 60,
+         cycle_mmet_hr = CYCLE_MMET * bike_minutes / 60)
+
+# View first few rows
+head(individual_data)
+```
+
+# Calculate total marginal metabolic equivalent task hours and define scenarios
+
+Here, we calculate the total weekly physical activity (in mMET-hrs per
+week) by summing physical activity from walking, cycling, and
+(non-transport) leisure time.
+
+We define a scenario in which transport physical activity is reduced by
+half, while (non-transport) leisure time physical activity remains the
+same.
+
+```{r}
+# Calculate baseline and scenario physical activity
+individual_data <- individual_data %>% 
+  mutate(total_mmet_hr_BASE = leisure_mmet_hr + walk_mmet_hr + cycle_mmet_hr,
+         total_mmet_hr_SCEN = leisure_mmet_hr + walk_mmet_hr/2 + cycle_mmet_hr/2)
+
+# Show summary statistics
+individual_data %>% select(total_mmet_hr_BASE, total_mmet_hr_SCEN) %>% summary()
+
+# Plot physical activity distributions using empirical density curves
+plot_data <- individual_data %>% 
+  pivot_longer(cols = c(total_mmet_hr_BASE, total_mmet_hr_SCEN), 
+               names_to = "scenario", names_prefix = "total_mmet_hr_", values_to = "mmet_hrs")
+
+ggplot(plot_data, aes(x = mmet_hrs, colour = scenario)) + geom_density() + scale_x_log10() + 
+   xlab("mMET-hours per week") + ylab("cumulative share of individuals")
+```
+
+# Calculate relative risks
+
+We can use the "dose_response" function from the DRPA package to
+estimate the relative risk associated with each individual's dose of
+physical activity, given in units of marginal metabolic equivalent tasks
+per week.
+
+Alternatively the dose-response curve data can be download from
+<https://shiny.mrc-epid.cam.ac.uk/meta-analyses-physical-activity/> and
+sampled manually.
+
+```{r}
+## Calculate relative risk for baseline and scenario
+individual_data <- individual_data %>%
+    mutate(rr_base = dose_response(cause = "all-cause-mortality", 
+                                   outcome_type = "fatal", 
+                                   dose = total_mmet_hr_BASE)[,1],
+           rr_scen = dose_response(cause = "all-cause-mortality", 
+                                   outcome_type = "fatal", 
+                                   dose = total_mmet_hr_SCEN)[,1])
+
+# Plot dose-response curves using an emperical cumulative density function (ECDF)
+plot_data <- individual_data %>% 
+  pivot_longer(cols = c(rr_base, rr_scen), 
+               names_to = "scenario", names_prefix = "rr_", values_to = "value")
+
+ggplot(plot_data, aes(x = value, colour = scenario)) + stat_ecdf() + 
+   xlab("All-cause mortality relative risk") + ylab("cumulative share of individuals")
+```
+
+As visible in the plot, the maximum RR is 1.0 (associated with zero
+physical activity) and the minimum is 0.6755 (associated with PA volumes
+of 12.84 mMET-hours per week or higher). Relative risks for the scenario
+are higher than those for the baseline due to the reduction in physical
+activity in the scenario.
+
+# Mortality
+
+Use mortality rates from the GBD to investigate changes in total
+mortality in the survey population.
+
+```{r}
+# Link travel survey data to gbd mortality data
+individual_data <- individual_data %>% 
+  left_join(select(mortality_data,age_gr,sex,mortality)) %>% 
+  mutate(mortality_base = mortality * rr_base,
+         mortality_scen = mortality * rr_scen)
+
+
+SURVEY_POPULATION_MORTALITY_BASE = sum(individual_data$mortality_base)
+SURVEY_POPULATION_MORTALITY_BASE
+
+SURVEY_POPULATION_MORTALITY_SCEN = sum(individual_data$mortality_scen)
+SURVEY_POPULATION_MORTALITY_SCEN
+
+SURVEY_POPULATION_MORTALITY_DIFFERENCE = SURVEY_POPULATION_MORTALITY_SCEN - SURVEY_POPULATION_MORTALITY_BASE
+SURVEY_POPULATION_MORTALITY_DIFFERENCE
+```
+
+These calculations show that in the survey population of 10.000, the
+scenario results in 1,19 more deaths than baseline.
+
+# PIF
+
+In this step we use the survey data to calculate population impact
+factors (PIFs) for the whole population as well as for various subgroups
+
+```{r}
+# Define function to calculate PIFs
+calculate_PIF <- function(data) {
+  baseline <- sum(data[["rr_base"]])
+  scenario <- sum(data[["rr_scen"]])
+  return((baseline - scenario)/baseline)
+}
+
+# Calculate PIFs for the whole population
+PIF = individual_data %>% calculate_PIF()
+
+# Calculate PIFs for different population subgroups
+PIF_female <- individual_data %>% filter(sex == "female") %>% calculate_PIF()
+PIF_male <- individual_data %>% filter(sex=="Male") %>% calculate_PIF()
+
+PIF_under50 <- individual_data %>% filter(age < 50) %>% calculate_PIF()
+PIF_over50 <- individual_data %>% filter(age >= 50) %>% calculate_PIF()
+
+# Calculate PIFs for ALL population subgroups from the GBD
+population_groups <- individual_data %>%
+  group_by(age_gr,sex) %>%
+  summarise(count = n(),
+            PIF = (sum(rr_base) - sum(rr_scen))/sum(rr_base)) %>%
+  left_join(select(mortality_data,age_gr,sex,deaths)) %>%
+  mutate(change = PIF * deaths)
+
+# View fist few rows
+head(population_groups)
+
+# Calculate total change in mortality
+TOTAL_MORTALITY_CHANGE = sum(population_groups$change)
+TOTAL_MORTALITY_CHANGE
+```
